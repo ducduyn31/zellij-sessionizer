@@ -108,7 +108,10 @@ impl ZellijPlugin for State {
                 self.sessions.clear();
                 for session in sessions.iter() {
                     let connected_users = session.connected_clients;
-                    self.sessions.insert(session.name.clone(), (session.is_current_session, connected_users));
+                    self.sessions.insert(
+                        session.name.clone(),
+                        (session.is_current_session, connected_users),
+                    );
                     if session.is_current_session {
                         self.current_session = session.name.clone();
                     }
@@ -173,7 +176,8 @@ impl ZellijPlugin for State {
         self.textinput.render(rows, cols);
         println!();
         println!();
-        self.dirlist.render(rows.saturating_sub(1), cols, &self.sessions);
+        self.dirlist
+            .render(rows.saturating_sub(1), cols, &self.sessions);
         println!();
         if !self.debug.is_empty() {
             println!();

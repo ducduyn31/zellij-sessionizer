@@ -31,13 +31,13 @@ impl TextInput {
     pub fn reset(&mut self) {
         self.text.clear();
     }
-    
+
     pub fn get_text(&self) -> String {
         self.text.iter().collect::<String>()
     }
 
     pub fn handle_backspace(&mut self) {
-            self.text.pop();
+        self.text.pop();
     }
 
     pub fn handle_char(&mut self, c: char) {
