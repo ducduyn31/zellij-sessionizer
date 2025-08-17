@@ -21,7 +21,6 @@ impl Default for Config {
 }
 
 fn parse_layout(layout: &str) -> LayoutInfo {
-    // builtin: ":default" custom: "default"
     if layout.starts_with(":") {
         LayoutInfo::BuiltIn(layout.trim_start_matches(':').to_string())
     } else {
@@ -30,7 +29,7 @@ fn parse_layout(layout: &str) -> LayoutInfo {
 }
 
 fn parse_dirs(dirs: &str) -> Vec<PathBuf> {
-    return dirs.split(';').map(PathBuf::from).collect();
+    dirs.split(';').map(PathBuf::from).collect()
 }
 
 impl From<BTreeMap<String, String>> for Config {

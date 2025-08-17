@@ -3,8 +3,10 @@ use zellij_tile::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
+use std::time::Duration;
 
 use crate::filter;
+use crate::utils::{format_base_text, format_duration, get_folder_name};
 
 #[derive(Debug, Default)]
 pub struct DirList {
@@ -47,9 +49,14 @@ impl DirList {
         }
     }
 
-    pub fn get_selected(&self) -> Option<String> {
-        if self.cursor < self.filtered_dirs.len() {
-            Some(self.filtered_dirs[self.cursor].clone())
+    pub fn get_selected(
+        &self,
+        sessions: &HashMap<String, (bool, usize)>,
+        resurrectable_sessions: &HashMap<String, Duration>,
+    ) -> Option<String> {
+        let sorted_dirs = self.get_sorted_dirs_with_sessions(sessions, resurrectable_sessions);
+        if self.cursor < sorted_dirs.len() {
+            Some(sorted_dirs[self.cursor].clone())
         } else {
             None
         }
@@ -65,27 +72,45 @@ impl DirList {
         self.cursor = 0;
     }
 
-    pub fn render(&self, rows: usize, _cols: usize, sessions: &HashMap<String, (bool, usize)>) {
+    fn get_sorted_dirs_with_sessions(
+        &self,
+        sessions: &HashMap<String, (bool, usize)>,
+        resurrectable_sessions: &HashMap<String, Duration>,
+    ) -> Vec<String> {
         let mut sorted_dirs = self.filtered_dirs.clone();
         sorted_dirs.sort_by(|a, b| {
-            let a_folder = Path::new(a)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            let b_folder = Path::new(b)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
+            let a_folder = get_folder_name(a);
+            let b_folder = get_folder_name(b);
 
             let a_has_session = sessions.contains_key(a_folder);
             let b_has_session = sessions.contains_key(b_folder);
+            let a_has_resurrectable = resurrectable_sessions.contains_key(a_folder);
+            let b_has_resurrectable = resurrectable_sessions.contains_key(b_folder);
 
-            match (a_has_session, b_has_session) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
+            match (
+                a_has_session,
+                b_has_session,
+                a_has_resurrectable,
+                b_has_resurrectable,
+            ) {
+                (true, false, _, _) => std::cmp::Ordering::Less,
+                (false, true, _, _) => std::cmp::Ordering::Greater,
+                (false, false, true, false) => std::cmp::Ordering::Less,
+                (false, false, false, true) => std::cmp::Ordering::Greater,
                 _ => a.cmp(b),
             }
         });
+        sorted_dirs
+    }
+
+    pub fn render(
+        &self,
+        rows: usize,
+        _cols: usize,
+        sessions: &HashMap<String, (bool, usize)>,
+        resurrectable_sessions: &HashMap<String, Duration>,
+    ) {
+        let sorted_dirs = self.get_sorted_dirs_with_sessions(sessions, resurrectable_sessions);
 
         let max_display_rows = rows.saturating_sub(4);
         let from = self
@@ -114,19 +139,11 @@ impl DirList {
             .skip(from)
             .take(items_to_show)
             .for_each(|(i, dir)| {
-                let folder_name = Path::new(dir)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("");
+                let folder_name = get_folder_name(dir);
+                let base = format_base_text(folder_name, dir, &duplicates);
 
                 let (base_text, user_count_start, user_count_end) =
                     if let Some((is_current, connected_users)) = sessions.get(folder_name) {
-                        let base = if duplicates.contains(folder_name) {
-                            format!("       > {} ({})", folder_name, dir)
-                        } else {
-                            format!("       > {}", folder_name)
-                        };
-
                         if *is_current {
                             let full_text =
                                 format!("{} [CURRENT - {} users]", base, connected_users);
@@ -139,17 +156,18 @@ impl DirList {
                             let user_end = user_start + connected_users.to_string().len();
                             (full_text, Some(user_start), Some(user_end))
                         } else {
-                            let full_text = format!("{} [INACTIVE]", base);
-                            let inactive_start = base.len() + " [".len();
-                            let inactive_end = inactive_start + "INACTIVE".len();
-                            (full_text, Some(inactive_start), Some(inactive_end))
+                            let full_text = format!("{} [CREATED]", base);
+                            let created_start = base.len() + " [".len();
+                            let created_end = created_start + "CREATED".len();
+                            (full_text, Some(created_start), Some(created_end))
                         }
+                    } else if let Some(creation_time) = resurrectable_sessions.get(folder_name) {
+                        let time_str = format_duration(*creation_time);
+                        let full_text = format!("{} [EXITED {}]", base, time_str);
+                        let exited_start = base.len() + " [".len();
+                        let exited_end = exited_start + "EXITED".len();
+                        (full_text, Some(exited_start), Some(exited_end))
                     } else {
-                        let base = if duplicates.contains(folder_name) {
-                            format!("       > {} ({})", folder_name, dir)
-                        } else {
-                            format!("       > {}", folder_name)
-                        };
                         (format!("{} [NOT CREATED]", base), None, None)
                     };
 
@@ -157,8 +175,9 @@ impl DirList {
                 let mut item = Text::new(&base_text);
 
                 if let (Some(start), Some(end)) = (user_count_start, user_count_end) {
-                    let is_inactive = base_text.contains("[INACTIVE]");
-                    let color = if is_inactive { 1 } else { 3 };
+                    let is_created = base_text.contains("[CREATED]");
+                    let is_exited = base_text.contains("[EXITED]");
+                    let color = if is_created || is_exited { 1 } else { 3 };
                     item = item.color_range(color, start..end);
                 }
                 let item = match i == self.cursor {

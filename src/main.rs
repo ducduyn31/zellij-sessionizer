@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use config::Config;
 
@@ -11,6 +12,7 @@ mod config;
 mod dirlist;
 mod filter;
 mod textinput;
+mod utils;
 use dirlist::DirList;
 use textinput::TextInput;
 
@@ -23,6 +25,7 @@ struct State {
     textinput: TextInput,
     current_session: String,
     sessions: HashMap<String, (bool, usize)>,
+    resurrectable_sessions: HashMap<String, Duration>,
 
     config: Config,
     debug: String,
@@ -46,7 +49,6 @@ impl State {
         } else {
             self.config.layout.clone()
         };
-        // Switch session will panic if the session is the current session
         if session_name != self.current_session {
             switch_session_with_layout(Some(session_name), layout, Some(cwd));
         }
@@ -104,7 +106,7 @@ impl ZellijPlugin for State {
                 self.dirlist.update_dirs(dirs);
                 should_render = true;
             }
-            Event::SessionUpdate(sessions, _) => {
+            Event::SessionUpdate(sessions, resurrectable_sessions) => {
                 self.sessions.clear();
                 for session in sessions.iter() {
                     let connected_users = session.connected_clients;
@@ -115,6 +117,12 @@ impl ZellijPlugin for State {
                     if session.is_current_session {
                         self.current_session = session.name.clone();
                     }
+                }
+
+                self.resurrectable_sessions.clear();
+                for (session_name, creation_time) in resurrectable_sessions.iter() {
+                    self.resurrectable_sessions
+                        .insert(session_name.clone(), *creation_time);
                 }
                 should_render = true;
             }
@@ -143,7 +151,10 @@ impl ZellijPlugin for State {
                         bare_key: BareKey::Enter,
                         key_modifiers: _,
                     } => {
-                        if let Some(selected) = self.dirlist.get_selected() {
+                        if let Some(selected) = self
+                            .dirlist
+                            .get_selected(&self.sessions, &self.resurrectable_sessions)
+                        {
                             let _ = self.switch_session_with_cwd(Path::new(&selected));
                             close_self();
                         }
@@ -176,8 +187,12 @@ impl ZellijPlugin for State {
         self.textinput.render(rows, cols);
         println!();
         println!();
-        self.dirlist
-            .render(rows.saturating_sub(1), cols, &self.sessions);
+        self.dirlist.render(
+            rows.saturating_sub(1),
+            cols,
+            &self.sessions,
+            &self.resurrectable_sessions,
+        );
         println!();
         if !self.debug.is_empty() {
             println!();
